@@ -1,5 +1,3 @@
-// src/cpp/data_generator.cpp
-#include "data_generator.h"
 #include <cmath>
 #include <random>
 #include <iostream>
@@ -8,10 +6,15 @@
 #include <sstream>
 #include <numeric>   // For std::accumulate
 #include <algorithm> // For std::transform
+#include <chrono>
+#include <likwid.h> // LIKWID header for performance monitoring
+#include <map>      // Include map for std::map
+#include <tuple>    // Include tuple for std::make_tuple
+
+#include "data_generator.h"
 
 namespace DataGenerator
 {
-
     // Function to compute the average signal power
     double avg_signal_pw(
         const std::map<std::string, std::vector<int>> &assign_dict,
@@ -23,9 +26,10 @@ namespace DataGenerator
         double DistAmp,
         const std::map<int, std::vector<double>> &dist_dict)
     {
+        LIKWID_MARKER_START("avg_signal_pw_region"); // Start LIKWID marker for avg_signal_pw
         double total_pw = 0.0;
 
-// Use OpenMP parallelization with reduction
+        // Use OpenMP parallelization with reduction
 #pragma omp parallel for reduction(+ : total_pw)
         for (int SU = 0; SU < nSU; ++SU)
         {
@@ -39,15 +43,18 @@ namespace DataGenerator
             }
         }
         double avg_pw = total_pw / (nSU * nch);
+
         std::cout << "Average power per frequency point: " << avg_pw << std::endl;
+        LIKWID_MARKER_STOP("avg_signal_pw_region"); // Stop LIKWID marker for avg_signal_pw
         return avg_pw;
     }
 
     // Function to load PSD library data
     PSDLibrary load_PSD_library(const std::string &directory)
     {
+        LIKWID_MARKER_START("load_PSD_library_region"); // Start LIKWID marker for loading PSD library
         PSDLibrary psd_lib;
-        psd_lib.description = "Loaded from CSV files";
+        psd_lib.description = "/home/coder/IRS_PartialObservation/src/python/utils/test_psd_lib";
 
         for (int PU = 1; PU <= 6; ++PU)
         {
@@ -75,7 +82,7 @@ namespace DataGenerator
 
             psd_lib.data[PU] = psd_samples;
         }
-
+        LIKWID_MARKER_STOP("load_PSD_library_region"); // Stop LIKWID marker for loading PSD library
         return psd_lib;
     }
 
@@ -96,7 +103,8 @@ namespace DataGenerator
         double alpha,
         double beta)
     {
-        int nPU = assign_dict.size() - 1; // Exclude 'description' if present
+        LIKWID_MARKER_START("generate_data_region"); // Start LIKWID marker for data generation
+        int nPU = assign_dict.size() - 1;            // Exclude 'description' if present
         int nSU = class_dir.size();
         int num_classes = dbsize_list.size();
         std::vector<std::vector<std::vector<std::vector<double>>>> db;
@@ -111,7 +119,7 @@ namespace DataGenerator
         std::random_device rd;
         std::mt19937 gen(rd());
 
-// OpenMP parallelization
+        // OpenMP parallelization
 #pragma omp parallel for schedule(dynamic)
         for (int cls = 0; cls < num_classes; ++cls)
         {
@@ -144,15 +152,13 @@ namespace DataGenerator
 
                     for (int PU = 0; PU < nPU; ++PU)
                     {
-                        // Check if PU is active in this class; this needs to be defined based on your logic
-                        bool pu_active = true; // Placeholder; you should define the actual condition
+                        bool pu_active = true; // Placeholder; define the actual condition
 
                         if (pu_active)
                         {
                             double adjusted_dist = DistAmp * dist_dict.at(PU)[SU];
                             double ch_gain = 1.0 / (beta * std::pow(adjusted_dist, alpha));
 
-                            // Apply path loss and shadow fading
                             std::normal_distribution<> shadow_fading(0, 0.365);
                             ch_gain *= std::pow(10, -0.365 * shadow_fading(thread_gen));
 
@@ -160,10 +166,7 @@ namespace DataGenerator
                             {
                                 label[ch] = 1;
 
-                                // Get PSD signal
                                 const auto &rcv_sig = PSD_lib.data.at(PU + 1)[PSDidx[PU]];
-
-                                // Scale the signal
                                 double pw = std::accumulate(rcv_sig.begin(), rcv_sig.end(), 0.0) / rcv_sig.size();
                                 std::vector<double> scaled_sig(rcv_sig.size());
                                 std::transform(rcv_sig.begin(), rcv_sig.end(), scaled_sig.begin(),
@@ -172,10 +175,9 @@ namespace DataGenerator
                                                    return val / pw * ch_gain;
                                                });
 
-                                // Add to the signal
                                 for (int idx = 0; idx < nw; ++idx)
                                 {
-                                    if (ch * nw + idx < a[0].size())
+                                    if (static_cast<size_t>(ch * nw + idx) < a[0].size())
                                     {
                                         a[0][ch * nw + idx] += scaled_sig[idx];
                                     }
@@ -186,7 +188,6 @@ namespace DataGenerator
                     inp[SU] = a;
                 }
 
-// Protect shared resources
 #pragma omp critical
                 {
                     db.push_back(inp);
@@ -194,6 +195,7 @@ namespace DataGenerator
                 }
             }
         }
+        LIKWID_MARKER_STOP("generate_data_region"); // Stop LIKWID marker for data generation
 
         return std::make_tuple(db, label_list);
     }

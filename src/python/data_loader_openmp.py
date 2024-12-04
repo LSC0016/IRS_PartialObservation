@@ -1,15 +1,18 @@
-import torch
-import os
+# src/python/data_loader_openmp.py
+
 from torch.utils.data import Dataset
+import data_generator_openmp_cpp
 from utils.data_utils import (
     get_locations,
     calculate_distances,
     get_assignments
 )
+import torch
+import os
 
 
-class MyDataset(Dataset):
-    def __init__(self, train=True, save_data=True, save_dir='./generated_data', use_cuda=False):
+class MyDatasetOpenMP(Dataset):
+    def __init__(self, train=True, save_data=True, save_dir='./generated_data'):
         # 获取 PU 和 SU 的位置
         locat_endpt, locat_centre = get_locations()
         # 计算距离字典
@@ -29,39 +32,24 @@ class MyDataset(Dataset):
         # 指定 PSD 库目录
         psd_directory = '/home/coder/IRS_PartialObservation/src/python/utils/test_psd_lib'  # 提供实际的路径
 
-        # 选择使用 CUDA 版本还是 OpenMP 版本的数据生成器
-        if use_cuda:
-            print("Using CUDA version of data generator")
-            import data_generator_cuda_cpp  # 在这里动态导入 CUDA 版本
-            self.data, self.labels = data_generator_cuda_cpp.generate_data(
-                DistAmp,
-                class_dir,
-                dbsize_list,
-                nch,
-                nw,
-                assign_dict,
-                SNR,
-                dist_dict,
-                psd_directory,  # 传递 PSD 库的路径，由 C++ 端加载
-                alpha,
-                beta
-            )
-        else:
-            print("Using OpenMP version of data generator")
-            import data_generator_openmp_cpp  # 在这里动态导入 OpenMP 版本
-            self.data, self.labels = data_generator_openmp_cpp.generate_data(
-                DistAmp,
-                class_dir,
-                dbsize_list,
-                nch,
-                nw,
-                assign_dict,
-                SNR,
-                dist_dict,
-                psd_directory,  # 传递 PSD 库的路径，由 C++ 端加载
-                alpha,
-                beta
-            )
+        # 加载 PSDLibrary 对象
+        psd_library = data_generator_openmp_cpp.load_PSD_library(psd_directory)
+
+        # 调用 OpenMP 版本的数据生成器
+        print("Using OpenMP version of data generator")
+        self.data, self.labels = data_generator_openmp_cpp.generate_data(
+            DistAmp,
+            class_dir,  # class_dir 保持嵌套结构
+            dbsize_list,
+            nch,
+            nw,
+            {str(k): v for k, v in assign_dict.items()},  # 确保 assign_dict 的键为字符串
+            SNR,
+            {int(k): [float(x) for x in v] for k, v in dist_dict.items()},  # 确保 dist_dict 的键为整数，值为浮点数列表
+            psd_library,  # 传递加载的 PSDLibrary 对象
+            alpha,
+            beta
+        )
 
         # 数据预处理 - 将数据和标签转换为 PyTorch 张量
         self.data = [torch.tensor(sample, dtype=torch.float32) for sample in self.data]
@@ -103,5 +91,4 @@ class MyDataset(Dataset):
 
 # 测试代码
 if __name__ == "__main__":
-    # 可以通过更改 `use_cuda` 参数来选择使用 CUDA 或 OpenMP 版本
-    dataset = MyDataset(train=True, save_data=True, save_dir='/home/coder/generated_data', use_cuda=True)
+    dataset = MyDatasetOpenMP(train=True, save_data=True, save_dir='/home/coder/generated_data')

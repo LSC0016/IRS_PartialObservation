@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "random": "cpp",
+        "cmath": "cpp",
+        "iostream": "cpp"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
+}
